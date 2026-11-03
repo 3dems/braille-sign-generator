@@ -2,7 +2,7 @@
     3DEMS Braille Tactile Sign Generator Pro
     Plugin para PrusaSlicer 3.0+
     Autor: 3DEMS (Author ID: 9d2f6477-ddc2-4189-b873-d0026dd7a4ef)
-    Estándares: ONCE (España), ADA (EE.UU.), Marburg Medium (Europa), AS 1428.1 (Australia)
+    Estándares principales: Europa/España (ONCE), América/EE.UU. (ADA), Internacional (BANA)
 --]]
 
 info = {
@@ -14,14 +14,13 @@ info = {
         {name = "text", label = "Texto a traducir", type = "string", default = "SALIDA"},
         {
             name = "standard",
-            label = "Normativa Braille",
+            label = "Estándar / Región",
             type = "combobox",
             allowed_values = {
-                "ONCE / España (UNE 41500)",
-                "ADA / EE.UU. (Title III 703)",
-                "Marburg Medium (Europa / DIN EN 15823)",
-                "Australia / NZ (AS 1428.1)",
-                "Personalizado (Ajustes manuales)"
+                "Europa / España (ONCE - Marburg)",
+                "América / EE.UU. (ADA Standard)",
+                "Internacional / Compacto (BANA)",
+                "Personalizado (Ajuste manual)"
             }
         },
         {name = "include_visual_text", label = "Incluir texto visual debajo", type = "bool", default = true},
@@ -32,9 +31,9 @@ info = {
     }
 }
 
--- Definición de estándares y normativas oficiales de señalética accesible
+-- Los 3 grandes estándares mundiales de señalética Braille
 local STANDARDS = {
-    ["ONCE / España (UNE 41500)"] = {
+    ["Europa / España (ONCE - Marburg)"] = {
         dot_diameter = 1.5,
         dot_height = 0.6,
         dot_spacing_x = 2.5,
@@ -42,23 +41,15 @@ local STANDARDS = {
         cell_pitch_x = 6.2,
         visual_gap = 8.0
     },
-    ["ADA / EE.UU. (Title III 703)"] = {
+    ["América / EE.UU. (ADA Standard)"] = {
         dot_diameter = 1.55,
         dot_height = 0.7,
         dot_spacing_x = 2.4,
         dot_spacing_y = 2.4,
         cell_pitch_x = 6.3,
-        visual_gap = 9.5 -- Separación mínima ADA: 3/8 in (9.5 mm)
+        visual_gap = 9.5 -- Separación legal obligatoria en EE.UU.: 3/8 in (9.5 mm)
     },
-    ["Marburg Medium (Europa / DIN EN 15823)"] = {
-        dot_diameter = 1.6,
-        dot_height = 0.55,
-        dot_spacing_x = 2.5,
-        dot_spacing_y = 2.5,
-        cell_pitch_x = 6.0,
-        visual_gap = 7.0
-    },
-    ["Australia / NZ (AS 1428.1)"] = {
+    ["Internacional / Compacto (BANA)"] = {
         dot_diameter = 1.45,
         dot_height = 0.6,
         dot_spacing_x = 2.3,
@@ -193,7 +184,7 @@ function execute(opts)
     if #text == 0 then text = "3DEMS" end
 
     -- Obtener la configuración según la normativa seleccionada
-    local std_name = opts.standard or "ONCE / España (UNE 41500)"
+    local std_name = opts.standard or "Europa / España (ONCE - Marburg)"
     local std_config = STANDARDS[std_name]
 
     local dot_diameter = std_config and std_config.dot_diameter or (opts.custom_dot_diameter or 1.5)
@@ -249,7 +240,7 @@ function execute(opts)
 
     local other_volumes = {}
 
-    -- Esfera base para los puntos Braille (semiesfera saliente con altura exacta de norma)
+    -- Esfera base para los puntos Braille (semiesfera ergonómica)
     local sphere_mesh = api.make_sphere(dot_radius)
     local dot_z = top_z - (dot_radius - dot_height)
 
