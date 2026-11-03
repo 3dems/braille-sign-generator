@@ -188,9 +188,9 @@ local function text_to_braille_cells(str)
     return cells
 end
 
--- Generador de geometría STL para la placa base, orificios M3 y puntos Braille combinados
--- Garantiza que PrusaSlicer 3.0 lamine todos los puntos Braille al 100% sin omitirlos
-local function write_braille_plate_stl(filepath, width, height, thickness, dots, dot_r, dot_h, is_sphere, mounting_holes, hole_r, margin_x)
+-- Generador de geometría STL para la placa base sólida continua y los puntos Braille combinados
+-- Garantiza que la placa sea un prisma sólido continuo y que PrusaSlicer lamine el 100% de los puntos
+local function write_braille_plate_stl(filepath, width, height, thickness, dots, dot_r, dot_h, is_sphere)
     local f = io.open(filepath, "w")
     if not f then return false end
 
@@ -225,88 +225,19 @@ local function write_braille_plate_stl(filepath, width, height, thickness, dots,
 
     local W, H, T = width, height, thickness
 
-    if mounting_holes and margin_x and margin_x > 0 then
-        -- 1A. Placa con orificios de montaje integrados directamente en la geometría
-        local x0, x1, x2, x3 = 0.0, margin_x, W - margin_x, W
-        local y0, y1 = 0.0, H
-        local cy = H / 2.0
-
-        -- Bloque central sólido
-        write_quad(x1, y0, 0,  x1, y1, 0,  x2, y1, 0,  x2, y0, 0)
-        write_quad(x1, y0, T,  x2, y0, T,  x2, y1, T,  x1, y1, T)
-        write_quad(x1, y0, 0,  x2, y0, 0,  x2, y0, T,  x1, y0, T)
-        write_quad(x2, y1, 0,  x1, y1, 0,  x1, y1, T,  x2, y1, T)
-
-        local function add_holed_block(bx0, bx1, hcx)
-            local n_circ = 24
-            local c_bot = {}
-            local c_top = {}
-            local perim_bot = {}
-            local perim_top = {}
-
-            for i = 0, n_circ - 1 do
-                local ang = (2.0 * math.pi) * (i / n_circ)
-                local cx_pt = hcx + hole_r * math.cos(ang)
-                local cy_pt = cy + hole_r * math.sin(ang)
-                c_bot[i + 1] = {x = cx_pt, y = cy_pt, z = 0.0}
-                c_top[i + 1] = {x = cx_pt, y = cy_pt, z = T}
-
-                local cos_a = math.cos(ang)
-                local sin_a = math.sin(ang)
-                local t = 1e9
-                if cos_a > 1e-6 then t = math.min(t, (bx1 - hcx) / cos_a)
-                elseif cos_a < -1e-6 then t = math.min(t, (bx0 - hcx) / cos_a) end
-                if sin_a > 1e-6 then t = math.min(t, (y1 - cy) / sin_a)
-                elseif sin_a < -1e-6 then t = math.min(t, (y0 - cy) / sin_a) end
-
-                local px = hcx + t * cos_a
-                local py = cy + t * sin_a
-                perim_bot[i + 1] = {x = px, y = py, z = 0.0}
-                perim_top[i + 1] = {x = px, y = py, z = T}
-            end
-
-            for i = 1, n_circ do
-                local next_i = (i % n_circ) + 1
-                -- Cara superior
-                write_quad(c_top[i].x, c_top[i].y, c_top[i].z,
-                           c_top[next_i].x, c_top[next_i].y, c_top[next_i].z,
-                           perim_top[next_i].x, perim_top[next_i].y, perim_top[next_i].z,
-                           perim_top[i].x, perim_top[i].y, perim_top[i].z)
-                -- Cara inferior
-                write_quad(c_bot[i].x, c_bot[i].y, c_bot[i].z,
-                           perim_bot[i].x, perim_bot[i].y, perim_bot[i].z,
-                           perim_bot[next_i].x, perim_bot[next_i].y, perim_bot[next_i].z,
-                           c_bot[next_i].x, c_bot[next_i].y, c_bot[next_i].z)
-                -- Pared interior del cilindro del orificio
-                write_quad(c_top[i].x, c_top[i].y, c_top[i].z,
-                           c_bot[i].x, c_bot[i].y, c_bot[i].z,
-                           c_bot[next_i].x, c_bot[next_i].y, c_bot[next_i].z,
-                           c_top[next_i].x, c_top[next_i].y, c_top[next_i].z)
-                -- Pared exterior
-                write_quad(perim_bot[i].x, perim_bot[i].y, perim_bot[i].z,
-                           perim_top[i].x, perim_top[i].y, perim_top[i].z,
-                           perim_top[next_i].x, perim_top[next_i].y, perim_top[next_i].z,
-                           perim_bot[next_i].x, perim_bot[next_i].y, perim_bot[next_i].z)
-            end
-        end
-
-        add_holed_block(x0, x1, margin_x / 2.0)
-        add_holed_block(x2, x3, W - margin_x / 2.0)
-    else
-        -- 1B. Prisma rectangular sólido estándar
-        -- Fondo (-Z)
-        write_quad(0, 0, 0,  0, H, 0,  W, H, 0,  W, 0, 0)
-        -- Tapa superior (+Z)
-        write_quad(0, 0, T,  W, 0, T,  W, H, T,  0, H, T)
-        -- Frente (-Y)
-        write_quad(0, 0, 0,  W, 0, 0,  W, 0, T,  0, 0, T)
-        -- Trasera (+Y)
-        write_quad(W, H, 0,  0, H, 0,  0, H, T,  W, H, T)
-        -- Izquierda (-X)
-        write_quad(0, 0, 0,  0, 0, T,  0, H, T,  0, H, 0)
-        -- Derecha (+X)
-        write_quad(W, 0, 0,  W, H, 0,  W, H, T,  W, 0, T)
-    end
+    -- 1. Prisma rectangular de la placa base: 100% cerrado, sólido y estanco (watertight manifold)
+    -- Fondo (-Z)
+    write_quad(0, 0, 0,  0, H, 0,  W, H, 0,  W, 0, 0)
+    -- Tapa superior (+Z)
+    write_quad(0, 0, T,  W, 0, T,  W, H, T,  0, H, T)
+    -- Frente (-Y)
+    write_quad(0, 0, 0,  W, 0, 0,  W, 0, T,  0, 0, T)
+    -- Trasera (+Y)
+    write_quad(W, H, 0,  0, H, 0,  0, H, T,  W, H, T)
+    -- Izquierda (-X)
+    write_quad(0, 0, 0,  0, 0, T,  0, H, T,  0, H, 0)
+    -- Derecha (+X)
+    write_quad(W, 0, 0,  W, H, 0,  W, H, T,  W, 0, T)
 
     -- 2. Puntos Braille integrados en la misma malla
     -- Se anclan 0.15 mm por debajo de la superficie superior para una adherencia estructural perfecta
@@ -489,13 +420,12 @@ function execute(opts)
         end
     end
 
-    -- 3. Generar la placa base con los puntos Braille (y orificios M3 si aplican) integrados
+    -- 3. Generar la placa base con los puntos Braille integrados en un prisma 100% sólido y continuo
     -- Al estar en la misma malla manifold, PrusaSlicer 3.0 lamina el 100% de los puntos sin omitirlos
     local temp_dir = os.getenv("TEMP") or os.getenv("TMP") or "C:/Windows/Temp"
     local stl_path = temp_dir:gsub("\\", "/") .. "/ps_braille_base_" .. tostring(os.time()) .. ".stl"
 
-    local hole_radius = 1.6 -- M3 (3.2 mm de diámetro)
-    local ok_write = write_braille_plate_stl(stl_path, plate_width, plate_height, base_thickness, dots, dot_radius, dot_height, is_sphere, mounting_holes, hole_radius, margin_x)
+    local ok_write = write_braille_plate_stl(stl_path, plate_width, plate_height, base_thickness, dots, dot_radius, dot_height, is_sphere)
 
     local base_mesh = nil
     if ok_write then
@@ -529,7 +459,35 @@ function execute(opts)
         end
     end
 
-    -- 4. Posicionar texto visual centrado justo debajo del bloque Braille
+    -- 4. Añadir orificios de montaje M3 (3.2 mm) si están habilitados como volúmenes negativos
+    if mounting_holes then
+        local hole_radius = 1.6
+        local hole_height = base_thickness * 3
+
+        -- Agujero izquierdo
+        table.insert(other_volumes, {
+            mesh = api.make_cylinder(hole_radius, hole_height),
+            type = VolumeType.Negative,
+            translate = {
+                x = p_min_x + (margin_x / 2),
+                y = p_center_y,
+                z = p_top_z - (hole_height / 2)
+            }
+        })
+
+        -- Agujero derecho
+        table.insert(other_volumes, {
+            mesh = api.make_cylinder(hole_radius, hole_height),
+            type = VolumeType.Negative,
+            translate = {
+                x = p_max_x - (margin_x / 2),
+                y = p_center_y,
+                z = p_top_z - (hole_height / 2)
+            }
+        })
+    end
+
+    -- 5. Posicionar texto visual centrado justo debajo del bloque Braille
     if include_visual and visual_mesh and vb then
         local visual_local_cx = (vb.max_x + vb.min_x) / 2
         local visual_local_cy = (vb.max_y + vb.min_y) / 2
@@ -545,7 +503,7 @@ function execute(opts)
         })
     end
 
-    -- 5. Añadir el objeto completo a la bandeja
+    -- 6. Añadir el objeto completo a la bandeja
     api.project:add_object {
         mesh = base_mesh,
         other_volumes = other_volumes
