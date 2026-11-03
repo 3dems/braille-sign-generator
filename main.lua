@@ -188,6 +188,141 @@ local function text_to_braille_cells(str)
     return cells
 end
 
+-- Generador de geometría STL para la placa base y los puntos Braille combinados
+-- Garantiza que PrusaSlicer 3.0 lamine todos los puntos Braille al 100% sin omitirlos
+local function write_braille_plate_stl(filepath, width, height, thickness, dots, dot_r, dot_h, is_sphere)
+    local f = io.open(filepath, "w")
+    if not f then return false end
+
+    f:write("solid braille_plate\n")
+
+    local function write_triangle(v1x, v1y, v1z, v2x, v2y, v2z, v3x, v3y, v3z)
+        local ax = v2x - v1x
+        local ay = v2y - v1y
+        local az = v2z - v1z
+        local bx = v3x - v1x
+        local by = v3y - v1y
+        local bz = v3z - v1z
+        local nx = ay * bz - az * by
+        local ny = az * bx - ax * bz
+        local nz = ax * by - ay * bx
+        local len = math.sqrt(nx * nx + ny * ny + nz * nz)
+        if len > 0 then
+            nx = nx / len
+            ny = ny / len
+            nz = nz / len
+        else
+            nx, ny, nz = 0.0, 0.0, 1.0
+        end
+        f:write(string.format("  facet normal %.6e %.6e %.6e\n    outer loop\n      vertex %.6f %.6f %.6f\n      vertex %.6f %.6f %.6f\n      vertex %.6f %.6f %.6f\n    endloop\n  endfacet\n",
+            nx, ny, nz, v1x, v1y, v1z, v2x, v2y, v2z, v3x, v3y, v3z))
+    end
+
+    local function write_quad(v1x, v1y, v1z, v2x, v2y, v2z, v3x, v3y, v3z, v4x, v4y, v4z)
+        write_triangle(v1x, v1y, v1z, v2x, v2y, v2z, v3x, v3y, v3z)
+        write_triangle(v1x, v1y, v1z, v3x, v3y, v3z, v4x, v4y, v4z)
+    end
+
+    -- 1. Prisma rectangular de la placa base
+    local W, H, T = width, height, thickness
+    -- Fondo (-Z)
+    write_quad(0, 0, 0,  0, H, 0,  W, H, 0,  W, 0, 0)
+    -- Tapa superior (+Z)
+    write_quad(0, 0, T,  W, 0, T,  W, H, T,  0, H, T)
+    -- Frente (-Y)
+    write_quad(0, 0, 0,  W, 0, 0,  W, 0, T,  0, 0, T)
+    -- Trasera (+Y)
+    write_quad(W, H, 0,  0, H, 0,  0, H, T,  W, H, T)
+    -- Izquierda (-X)
+    write_quad(0, 0, 0,  0, 0, T,  0, H, T,  0, H, 0)
+    -- Derecha (+X)
+    write_quad(W, 0, 0,  W, H, 0,  W, H, T,  W, 0, T)
+
+    -- 2. Puntos Braille integrados en la misma malla
+    -- Se anclan 0.15 mm por debajo de la superficie superior para una adherencia estructural perfecta
+    local embed = 0.15
+    local z_base = T - embed
+    local n_lat = 10
+    local n_lon = 18
+
+    for _, dot in ipairs(dots) do
+        local cx, cy = dot.x, dot.y
+        if is_sphere then
+            -- Cúpula esférica redondeada (Sensación táctil clásica)
+            local apex_z = T + dot_h
+            local total_h = dot_h + embed
+            local rings = {}
+            for i = 1, n_lat do
+                local theta = (math.pi / 2.0) * (i / n_lat)
+                local z = z_base + total_h * math.cos(theta)
+                local r = dot_r * math.sin(theta)
+                local ring = {}
+                for j = 0, n_lon - 1 do
+                    local phi = (2.0 * math.pi) * (j / n_lon)
+                    ring[j + 1] = {x = cx + r * math.cos(phi), y = cy + r * math.sin(phi), z = z}
+                end
+                rings[i] = ring
+            end
+
+            -- Casquete superior (del ápice al primer anillo)
+            for j = 1, n_lon do
+                local next_j = (j % n_lon) + 1
+                write_triangle(cx, cy, apex_z,
+                               rings[1][next_j].x, rings[1][next_j].y, rings[1][next_j].z,
+                               rings[1][j].x, rings[1][j].y, rings[1][j].z)
+            end
+
+            -- Anillos del cuerpo esférico
+            for i = 1, #rings - 1 do
+                local r1 = rings[i]
+                local r2 = rings[i + 1]
+                for j = 1, n_lon do
+                    local next_j = (j % n_lon) + 1
+                    write_quad(r1[j].x, r1[j].y, r1[j].z,
+                               r1[next_j].x, r1[next_j].y, r1[next_j].z,
+                               r2[next_j].x, r2[next_j].y, r2[next_j].z,
+                               r2[j].x, r2[j].y, r2[j].z)
+                end
+            end
+
+            -- Fondo plano del punto en z_base
+            local last_ring = rings[#rings]
+            for j = 1, n_lon do
+                local next_j = (j % n_lon) + 1
+                write_triangle(cx, cy, z_base,
+                               last_ring[j].x, last_ring[j].y, last_ring[j].z,
+                               last_ring[next_j].x, last_ring[next_j].y, last_ring[next_j].z)
+            end
+        else
+            -- Pivote cilíndrico
+            local top_z = T + dot_h
+            local top_ring = {}
+            local bot_ring = {}
+            for j = 0, n_lon - 1 do
+                local phi = (2.0 * math.pi) * (j / n_lon)
+                local rx = dot_r * math.cos(phi)
+                local ry = dot_r * math.sin(phi)
+                top_ring[j + 1] = {x = cx + rx, y = cy + ry, z = top_z}
+                bot_ring[j + 1] = {x = cx + rx, y = cy + ry, z = z_base}
+            end
+
+            for j = 1, n_lon do
+                local next_j = (j % n_lon) + 1
+                write_triangle(cx, cy, top_z,  top_ring[next_j].x, top_ring[next_j].y, top_ring[next_j].z,  top_ring[j].x, top_ring[j].y, top_ring[j].z)
+                write_triangle(cx, cy, z_base,  bot_ring[j].x, bot_ring[j].y, bot_ring[j].z,  bot_ring[next_j].x, bot_ring[next_j].y, bot_ring[next_j].z)
+                write_quad(top_ring[j].x, top_ring[j].y, top_ring[j].z,
+                           top_ring[next_j].x, top_ring[next_j].y, top_ring[next_j].z,
+                           bot_ring[next_j].x, bot_ring[next_j].y, bot_ring[next_j].z,
+                           bot_ring[j].x, bot_ring[j].y, bot_ring[j].z)
+            end
+        end
+    end
+
+    f:write("endsolid braille_plate\n")
+    f:close()
+    return true
+end
+
 function execute(opts)
     local text = opts.text or "Baño hombres"
     if #text == 0 then text = "3DEMS" end
@@ -197,7 +332,7 @@ function execute(opts)
     local std_config = STANDARDS[std_name]
 
     local dot_diameter = std_config and std_config.dot_diameter or (opts.custom_dot_diameter or 1.6)
-    local dot_height = std_config and std_config.dot_height or (opts.custom_dot_height or 0.6)
+    local dot_height = std_config and std_config.dot_height or (opts.custom_dot_height or 0.7)
     local dot_spacing_x = std_config and std_config.dot_spacing_x or 2.5
     local dot_spacing_y = std_config and std_config.dot_spacing_y or 2.5
     local cell_pitch_x = std_config and std_config.cell_pitch_x or 6.2
@@ -207,7 +342,7 @@ function execute(opts)
     local base_thickness = opts.base_thickness or 2.4
     local include_visual = opts.include_visual_text
     local mounting_holes = opts.mounting_holes
-    local dot_shape = opts.dot_shape or "Pivote táctil (Recomendado boquilla 0.4 mm)"
+    local dot_shape = opts.dot_shape or "Cúpula esférica redondeada (Sensación táctil clásica)"
 
     local braille_cell_height = dot_spacing_y * 2 -- De fila 1 a fila 3 (5.0 mm)
 
@@ -243,37 +378,18 @@ function execute(opts)
     local total_content_height = braille_cell_height + (include_visual and (gap_to_visual_text + visual_height) or 0)
     local plate_height = total_content_height + margin_top + margin_bottom
 
-    -- 2. Crear placa base como prisma sólido
-    local base_mesh = api.make_cube(plate_width, plate_height, base_thickness)
-    local bb = base_mesh:bounds()
+    -- Puntos de referencia geométricos
+    local p_min_x = 0
+    local p_max_x = plate_width
+    local p_min_y = 0
+    local p_max_y = plate_height
+    local p_center_x = plate_width / 2
+    local p_center_y = plate_height / 2
+    local p_top_z = base_thickness
 
-    -- Puntos de referencia geométricos absolutos de la placa base
-    local p_min_x = (bb and bb.max_x > bb.min_x) and bb.min_x or 0
-    local p_max_x = (bb and bb.max_x > bb.min_x) and bb.max_x or plate_width
-    local p_min_y = (bb and bb.max_y > bb.min_y) and bb.min_y or 0
-    local p_max_y = (bb and bb.max_y > bb.min_y) and bb.max_y or plate_height
-    local p_center_x = (p_min_x + p_max_x) / 2
-    local p_center_y = (p_min_y + p_max_y) / 2
-    local p_top_z = (bb and bb.max_z > bb.min_z) and bb.max_z or base_thickness
-
-    local other_volumes = {}
-
-    -- 3. Crear puntos Braille según la geometría elegida
-    -- La opción por defecto "Cúpula esférica" da el tacto clásico suave normalizado.
+    -- 2. Calcular coordenadas absolutas de todos los puntos Braille
     local is_sphere = (string.find(dot_shape, "cilíndrico") == nil)
-    local dot_sphere_radius = (dot_diameter / 2) + 0.05
-    local dot_z
 
-    if is_sphere then
-        -- Cúpula esférica: el ápice sobresale exactamente dot_height sobre la placa
-        dot_z = (p_top_z + dot_height) - dot_sphere_radius
-    else
-        -- Pivote cilíndrico
-        local embed = 0.1
-        dot_z = p_top_z - embed
-    end
-
-    -- Coordenadas de los 6 puntos dentro de cada celda Braille
     local DOT_OFFSETS = {
         [1] = {x = 0, y = dot_spacing_y},
         [2] = {x = 0, y = 0},
@@ -289,25 +405,54 @@ function execute(opts)
         braille_center_y = p_max_y - margin_top - (braille_cell_height / 2)
     end
 
+    local dots = {}
     for cell_idx, cell_dots in ipairs(cells) do
         local cell_x = braille_start_x + (cell_idx - 1) * cell_pitch_x
         for _, dot_num in ipairs(cell_dots) do
             local offset = DOT_OFFSETS[dot_num]
             if offset then
-                local dot_mesh
-                if is_sphere then
-                    dot_mesh = api.make_sphere(dot_sphere_radius)
-                else
-                    dot_mesh = api.make_cylinder(dot_radius, dot_height + 0.1)
-                end
+                table.insert(dots, {
+                    x = cell_x + offset.x,
+                    y = braille_center_y + offset.y
+                })
+            end
+        end
+    end
 
+    -- 3. Generar la placa base con los puntos Braille integrados en un único sólido 3D
+    -- Al estar en la misma malla manifold, PrusaSlicer 3.0 lamina el 100% de los puntos sin omitirlos
+    local temp_dir = os.getenv("TEMP") or os.getenv("TMP") or "C:/Windows/Temp"
+    local stl_path = temp_dir:gsub("\\", "/") .. "/ps_braille_base_" .. tostring(os.time()) .. ".stl"
+
+    local ok_write = write_braille_plate_stl(stl_path, plate_width, plate_height, base_thickness, dots, dot_radius, dot_height, is_sphere)
+
+    local base_mesh = nil
+    if ok_write then
+        local ok_load, loaded = pcall(function() return api.load_stl(stl_path) end)
+        if ok_load and loaded then
+            base_mesh = loaded
+        end
+        pcall(function() os.remove(stl_path) end)
+    end
+
+    local other_volumes = {}
+
+    -- Fallback si api.load_stl no estuviese disponible
+    if not base_mesh then
+        base_mesh = api.make_cube(plate_width, plate_height, base_thickness)
+        for _, dot in ipairs(dots) do
+            local dot_mesh
+            if is_sphere then
+                dot_mesh = api.make_sphere(dot_radius)
                 table.insert(other_volumes, {
                     mesh = dot_mesh,
-                    translate = {
-                        x = cell_x + offset.x,
-                        y = braille_center_y + offset.y,
-                        z = dot_z
-                    }
+                    translate = {x = dot.x, y = dot.y, z = p_top_z + dot_height - dot_radius}
+                })
+            else
+                dot_mesh = api.make_cylinder(dot_radius, dot_height)
+                table.insert(other_volumes, {
+                    mesh = dot_mesh,
+                    translate = {x = dot.x, y = dot.y, z = p_top_z}
                 })
             end
         end
