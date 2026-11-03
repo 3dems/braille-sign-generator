@@ -23,10 +23,19 @@ info = {
                 "Personalizado (Ajuste manual)"
             }
         },
+        {
+            name = "dot_shape",
+            label = "Geometría de puntos Braille",
+            type = "combobox",
+            allowed_values = {
+                "Pivote táctil (Recomendado boquilla 0.4 mm)",
+                "Semiesfera clásica (Para boquilla 0.25 mm / capa fina)"
+            }
+        },
         {name = "include_visual_text", label = "Incluir texto visual debajo", type = "bool", default = true},
         {name = "mounting_holes", label = "Orificios para tornillos M3 (3.2 mm)", type = "bool", default = false},
         {name = "base_thickness", label = "Grosor de la base [mm]", type = "float", default = 2.4},
-        {name = "custom_dot_diameter", label = "[Manual] Diámetro de puntos [mm]", type = "float", default = 1.5},
+        {name = "custom_dot_diameter", label = "[Manual] Diámetro de puntos [mm]", type = "float", default = 1.6},
         {name = "custom_dot_height", label = "[Manual] Altura de puntos [mm]", type = "float", default = 0.6}
     }
 }
@@ -34,7 +43,7 @@ info = {
 -- Los 3 grandes estándares mundiales de señalética Braille
 local STANDARDS = {
     ["Europa / España (ONCE - Marburg)"] = {
-        dot_diameter = 1.5,
+        dot_diameter = 1.6, -- Óptimo para laminado con boquilla 0.4
         dot_height = 0.6,
         dot_spacing_x = 2.5,
         dot_spacing_y = 2.5,
@@ -42,7 +51,7 @@ local STANDARDS = {
         visual_gap = 8.0
     },
     ["América / EE.UU. (ADA Standard)"] = {
-        dot_diameter = 1.55,
+        dot_diameter = 1.6,
         dot_height = 0.7,
         dot_spacing_x = 2.4,
         dot_spacing_y = 2.4,
@@ -50,7 +59,7 @@ local STANDARDS = {
         visual_gap = 9.5 -- Separación legal obligatoria en EE.UU.: 3/8 in (9.5 mm)
     },
     ["Internacional / Compacto (BANA)"] = {
-        dot_diameter = 1.45,
+        dot_diameter = 1.5,
         dot_height = 0.6,
         dot_spacing_x = 2.3,
         dot_spacing_y = 2.3,
@@ -187,7 +196,7 @@ function execute(opts)
     local std_name = opts.standard or "Europa / España (ONCE - Marburg)"
     local std_config = STANDARDS[std_name]
 
-    local dot_diameter = std_config and std_config.dot_diameter or (opts.custom_dot_diameter or 1.5)
+    local dot_diameter = std_config and std_config.dot_diameter or (opts.custom_dot_diameter or 1.6)
     local dot_height = std_config and std_config.dot_height or (opts.custom_dot_height or 0.6)
     local dot_spacing_x = std_config and std_config.dot_spacing_x or 2.5
     local dot_spacing_y = std_config and std_config.dot_spacing_y or 2.5
@@ -198,6 +207,7 @@ function execute(opts)
     local base_thickness = opts.base_thickness or 2.4
     local include_visual = opts.include_visual_text
     local mounting_holes = opts.mounting_holes
+    local dot_shape = opts.dot_shape or "Pivote táctil (Recomendado boquilla 0.4 mm)"
 
     local braille_cell_height = dot_spacing_y * 2 -- De fila 1 a fila 3 (5.0 mm)
 
@@ -248,15 +258,24 @@ function execute(opts)
 
     local other_volumes = {}
 
-    -- 3. Calcular posición exacta de los puntos Braille
-    local sphere_mesh = api.make_sphere(dot_radius)
-    -- Se entierra ligeramente (0.05 mm) en la placa para fusión booleana perfecta
-    local dot_z = p_top_z - (dot_radius - dot_height)
+    -- 3. Crear malla del punto Braille según la geometría elegida
+    -- En FDM con boquilla 0.4 mm, un cilindro de diámetro constante se lamina al 100%
+    -- mientras que una esfera pura es descartada por el generador de perímetros Arachne
+    local dot_mesh
+    local dot_z
+    local use_sphere = string.find(dot_shape, "Semiesfera") ~= nil
+
+    if use_sphere then
+        dot_mesh = api.make_sphere(dot_radius)
+        dot_z = p_top_z - (dot_radius - dot_height)
+    else
+        -- Cilindro con penetración de 0.1 mm en la placa para fusionarse como una sola masa
+        local embed = 0.1
+        dot_mesh = api.make_cylinder(dot_radius, dot_height + embed)
+        dot_z = p_top_z - embed
+    end
 
     -- Coordenadas de los 6 puntos dentro de cada celda Braille
-    -- Fila superior (1, 4): offset +dot_spacing_y
-    -- Fila media    (2, 5): offset 0
-    -- Fila inferior (3, 6): offset -dot_spacing_y
     local DOT_OFFSETS = {
         [1] = {x = 0, y = dot_spacing_y},
         [2] = {x = 0, y = 0},
@@ -269,7 +288,6 @@ function execute(opts)
     local braille_start_x = p_center_x - (braille_width / 2)
     local braille_center_y = p_center_y
     if include_visual then
-        -- En la mitad superior de la placa
         braille_center_y = p_max_y - margin_top - (braille_cell_height / 2)
     end
 
@@ -279,8 +297,7 @@ function execute(opts)
             local offset = DOT_OFFSETS[dot_num]
             if offset then
                 table.insert(other_volumes, {
-                    mesh = sphere_mesh,
-                    type = VolumeType.Model,
+                    mesh = dot_mesh,
                     translate = {
                         x = cell_x + offset.x,
                         y = braille_center_y + offset.y,
@@ -299,11 +316,10 @@ function execute(opts)
 
         table.insert(other_volumes, {
             mesh = visual_mesh,
-            type = VolumeType.Model,
             translate = {
                 x = p_center_x - visual_local_cx,
                 y = visual_target_y - visual_local_cy,
-                z = p_top_z - vb.min_z - 0.05 -- Leve penetración de 0.05 mm para fusión sólida
+                z = p_top_z - vb.min_z - 0.05
             }
         })
     end
