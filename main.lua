@@ -5,24 +5,6 @@
     Estándares principales: Europa/España (ONCE), América/EE.UU. (ADA), Internacional (BANA)
 --]]
 
-local function debug_log(...)
-    if not io or not io.open then return end
-    local args = {...}
-    pcall(function()
-        local log_path = "C:/Users/Eliu/AppData/Local/Temp/braille_plugin_debug.log"
-        local f = io.open(log_path, "a")
-        if f then
-            local str = ""
-            for i, p in ipairs(args) do
-                str = str .. (i > 1 and " " or "") .. tostring(p)
-            end
-            local t = (os and os.date) and os.date("%Y-%m-%d %H:%M:%S") or ""
-            f:write(t .. " [BRAILLE] " .. str .. "\n")
-            f:close()
-        end
-    end)
-end
-
 info = {
     id = "braille_sign_generator",
     type = "project.plugin",
@@ -206,151 +188,8 @@ local function text_to_braille_cells(str)
     return cells
 end
 
--- Generador de geometría STL para la placa base sólida continua y los puntos Braille combinados
--- Garantiza que la placa sea un prisma sólido continuo y que PrusaSlicer lamine el 100% de los puntos
-local function write_braille_plate_stl(filepath, width, height, thickness, dots, dot_r, dot_h, is_sphere)
-    local f = io.open(filepath, "w")
-    if not f then return false end
-
-    f:write("solid braille_plate\n")
-
-    local function write_triangle(v1x, v1y, v1z, v2x, v2y, v2z, v3x, v3y, v3z)
-        local ax = v2x - v1x
-        local ay = v2y - v1y
-        local az = v2z - v1z
-        local bx = v3x - v1x
-        local by = v3y - v1y
-        local bz = v3z - v1z
-        local nx = ay * bz - az * by
-        local ny = az * bx - ax * bz
-        local nz = ax * by - ay * bx
-        local len = math.sqrt(nx * nx + ny * ny + nz * nz)
-        if len > 0 then
-            nx = nx / len
-            ny = ny / len
-            nz = nz / len
-        else
-            nx, ny, nz = 0.0, 0.0, 1.0
-        end
-        f:write(string.format("  facet normal %.6e %.6e %.6e\n    outer loop\n      vertex %.6f %.6f %.6f\n      vertex %.6f %.6f %.6f\n      vertex %.6f %.6f %.6f\n    endloop\n  endfacet\n",
-            nx, ny, nz, v1x, v1y, v1z, v2x, v2y, v2z, v3x, v3y, v3z))
-    end
-
-    local function write_quad(v1x, v1y, v1z, v2x, v2y, v2z, v3x, v3y, v3z, v4x, v4y, v4z)
-        write_triangle(v1x, v1y, v1z, v2x, v2y, v2z, v3x, v3y, v3z)
-        write_triangle(v1x, v1y, v1z, v3x, v3y, v3z, v4x, v4y, v4z)
-    end
-
-    local W, H, T = width, height, thickness
-
-    -- 1. Prisma rectangular de la placa base: 100% cerrado, sólido y estanco (watertight manifold)
-    -- Fondo (-Z)
-    write_quad(0, 0, 0,  0, H, 0,  W, H, 0,  W, 0, 0)
-    -- Tapa superior (+Z)
-    write_quad(0, 0, T,  W, 0, T,  W, H, T,  0, H, T)
-    -- Frente (-Y)
-    write_quad(0, 0, 0,  W, 0, 0,  W, 0, T,  0, 0, T)
-    -- Trasera (+Y)
-    write_quad(W, H, 0,  0, H, 0,  0, H, T,  W, H, T)
-    -- Izquierda (-X)
-    write_quad(0, 0, 0,  0, 0, T,  0, H, T,  0, H, 0)
-    -- Derecha (+X)
-    write_quad(W, 0, 0,  W, H, 0,  W, H, T,  W, 0, T)
-
-    -- 2. Puntos Braille integrados en la misma malla
-    -- Se anclan 0.15 mm por debajo de la superficie superior para una adherencia estructural perfecta
-    local embed = 0.15
-    local z_base = T - embed
-    local n_lat = 10
-    local n_lon = 18
-
-    for _, dot in ipairs(dots) do
-        local cx, cy = dot.x, dot.y
-        if is_sphere then
-            -- Cúpula esférica redondeada (Sensación táctil clásica)
-            local apex_z = T + dot_h
-            local total_h = dot_h + embed
-            local rings = {}
-            for i = 1, n_lat do
-                local theta = (math.pi / 2.0) * (i / n_lat)
-                local z = z_base + total_h * math.cos(theta)
-                local r = dot_r * math.sin(theta)
-                local ring = {}
-                for j = 0, n_lon - 1 do
-                    local phi = (2.0 * math.pi) * (j / n_lon)
-                    ring[j + 1] = {x = cx + r * math.cos(phi), y = cy + r * math.sin(phi), z = z}
-                end
-                rings[i] = ring
-            end
-
-            -- Casquete superior (del ápice al primer anillo)
-            for j = 1, n_lon do
-                local next_j = (j % n_lon) + 1
-                write_triangle(cx, cy, apex_z,
-                               rings[1][next_j].x, rings[1][next_j].y, rings[1][next_j].z,
-                               rings[1][j].x, rings[1][j].y, rings[1][j].z)
-            end
-
-            -- Anillos del cuerpo esférico
-            for i = 1, #rings - 1 do
-                local r1 = rings[i]
-                local r2 = rings[i + 1]
-                for j = 1, n_lon do
-                    local next_j = (j % n_lon) + 1
-                    write_quad(r1[j].x, r1[j].y, r1[j].z,
-                               r1[next_j].x, r1[next_j].y, r1[next_j].z,
-                               r2[next_j].x, r2[next_j].y, r2[next_j].z,
-                               r2[j].x, r2[j].y, r2[j].z)
-                end
-            end
-
-            -- Fondo plano del punto en z_base
-            local last_ring = rings[#rings]
-            for j = 1, n_lon do
-                local next_j = (j % n_lon) + 1
-                write_triangle(cx, cy, z_base,
-                               last_ring[j].x, last_ring[j].y, last_ring[j].z,
-                               last_ring[next_j].x, last_ring[next_j].y, last_ring[next_j].z)
-            end
-        else
-            -- Pivote cilíndrico
-            local top_z = T + dot_h
-            local top_ring = {}
-            local bot_ring = {}
-            for j = 0, n_lon - 1 do
-                local phi = (2.0 * math.pi) * (j / n_lon)
-                local rx = dot_r * math.cos(phi)
-                local ry = dot_r * math.sin(phi)
-                top_ring[j + 1] = {x = cx + rx, y = cy + ry, z = top_z}
-                bot_ring[j + 1] = {x = cx + rx, y = cy + ry, z = z_base}
-            end
-
-            for j = 1, n_lon do
-                local next_j = (j % n_lon) + 1
-                write_triangle(cx, cy, top_z,  top_ring[next_j].x, top_ring[next_j].y, top_ring[next_j].z,  top_ring[j].x, top_ring[j].y, top_ring[j].z)
-                write_triangle(cx, cy, z_base,  bot_ring[j].x, bot_ring[j].y, bot_ring[j].z,  bot_ring[next_j].x, bot_ring[next_j].y, bot_ring[next_j].z)
-                write_quad(top_ring[j].x, top_ring[j].y, top_ring[j].z,
-                           top_ring[next_j].x, top_ring[next_j].y, top_ring[next_j].z,
-                           bot_ring[next_j].x, bot_ring[next_j].y, bot_ring[next_j].z,
-                           bot_ring[j].x, bot_ring[j].y, bot_ring[j].z)
-            end
-        end
-    end
-
-    f:write("endsolid braille_plate\n")
-    f:close()
-    return true
-end
-
-local function run_execute(opts)
+function execute(opts)
     opts = opts or {}
-    debug_log("=== EXECUTE STARTED ===")
-    debug_log("opts.text:", opts.text)
-    debug_log("opts.mounting_holes:", opts.mounting_holes)
-    debug_log("opts.include_visual_text:", opts.include_visual_text)
-    debug_log("opts.standard:", opts.standard)
-    debug_log("opts.dot_shape:", opts.dot_shape)
-
     local text = opts.text or "Baño hombres"
     if #text == 0 then text = "3DEMS" end
 
@@ -388,27 +227,23 @@ local function run_execute(opts)
     local visual_height = 0
     local vb = nil
     if include_visual then
-        debug_log("Generating visual text...")
-        local ok_font, font = pcall(function() return api.get_font("Inter") or api.get_default_font() end)
-        if not ok_font or not font then
+        local font = nil
+        pcall(function() font = api.get_font("Inter") or api.get_default_font() end)
+        if not font then
             font = api.get_default_font()
         end
-        local ok_emboss, em = pcall(function()
-            return api.emboss_text {
+        pcall(function()
+            visual_mesh = api.emboss_text {
                 font = font,
                 text = text,
                 depth = 0.8
             }
+            if visual_mesh then
+                vb = visual_mesh:bounds()
+                visual_width = vb.max_x - vb.min_x
+                visual_height = vb.max_y - vb.min_y
+            end
         end)
-        if ok_emboss and em then
-            visual_mesh = em
-            vb = visual_mesh:bounds()
-            visual_width = vb.max_x - vb.min_x
-            visual_height = vb.max_y - vb.min_y
-            debug_log("Visual text bounds: width=", visual_width, "height=", visual_height)
-        else
-            debug_log("Visual text emboss failed:", tostring(em))
-        end
     end
 
     -- Calcular tamaño total de la placa base
@@ -457,101 +292,82 @@ local function run_execute(opts)
             end
         end
     end
-    debug_log("Total braille dots calculated:", #dots)
 
-    -- 3. Generar la placa base con los puntos Braille integrados en un prisma 100% sólido y continuo
-    local plugin_dir = "./"
-    local info_src = debug.getinfo(1, "S")
-    if info_src and info_src.source and info_src.source:sub(1,1) == "@" then
-        local src_path = info_src.source:sub(2)
-        plugin_dir = src_path:match("(.*[/\\])") or "./"
-    end
-    debug_log("Plugin directory resolved to:", plugin_dir)
-
-    -- Intentar escribir dentro del directorio del plugin primero, y si no en TEMP
-    local stl_filename = "temp_braille_base_" .. tostring(os.time()) .. ".stl"
-    local stl_path = plugin_dir:gsub("\\", "/") .. "/" .. stl_filename
-    local ok_write = write_braille_plate_stl(stl_path, plate_width, plate_height, base_thickness, dots, dot_radius, dot_height, is_sphere)
-    if not ok_write then
-        local temp_dir = os.getenv("TEMP") or os.getenv("TMP") or "C:/Windows/Temp"
-        stl_path = temp_dir:gsub("\\", "/") .. "/" .. stl_filename
-        ok_write = write_braille_plate_stl(stl_path, plate_width, plate_height, base_thickness, dots, dot_radius, dot_height, is_sphere)
-    end
-    debug_log("write_braille_plate_stl ok_write:", ok_write, "stl_path:", stl_path)
-
-    local base_mesh = nil
-    if ok_write then
-        local ok_load, res = pcall(function() return api.load_stl(stl_path) end)
-        debug_log("api.load_stl status:", ok_load, "result type:", type(res), "result:", tostring(res))
-        if ok_load and res then
-            base_mesh = res
-        end
-        pcall(function() os.remove(stl_path) end)
-    end
-
+    -- 3. Crear placa base sólida pura mediante la API nativa de PrusaSlicer
+    local base_mesh = api.make_cube(plate_width, plate_height, base_thickness)
     local other_volumes = {}
 
-    -- Fallback si api.load_stl no estuviese disponible
-    if not base_mesh then
-        debug_log("Base mesh is nil! Falling back to api.make_cube + individual dots...")
-        base_mesh = api.make_cube(plate_width, plate_height, base_thickness)
-        for _, dot in ipairs(dots) do
-            local dot_mesh
-            if is_sphere then
-                dot_mesh = api.make_sphere(dot_radius)
-                table.insert(other_volumes, {
-                    mesh = dot_mesh,
-                    translate = {x = dot.x, y = dot.y, z = p_top_z + dot_height - dot_radius}
-                })
-            else
-                dot_mesh = api.make_cylinder(dot_radius, dot_height)
-                table.insert(other_volumes, {
-                    mesh = dot_mesh,
-                    translate = {x = dot.x, y = dot.y, z = p_top_z}
-                })
-            end
+    -- Añadir los puntos Braille con anclaje continuo para garantizar su laminado completo
+    for _, dot in ipairs(dots) do
+        if is_sphere then
+            -- Base cilíndrica de apoyo (0.35 mm) para asegurar que el laminador lo detecta con boquilla 0.4
+            local stem_height = dot_height * 0.5
+            table.insert(other_volumes, {
+                mesh = api.make_cylinder(dot_radius, stem_height),
+                translate = {
+                    x = dot.x,
+                    y = dot.y,
+                    z = p_top_z
+                }
+            })
+            -- Cúpula esférica táctil encima
+            table.insert(other_volumes, {
+                mesh = api.make_sphere(dot_radius),
+                translate = {
+                    x = dot.x,
+                    y = dot.y,
+                    z = p_top_z + dot_height - dot_radius
+                }
+            })
+        else
+            -- Pivote cilíndrico clásico
+            table.insert(other_volumes, {
+                mesh = api.make_cylinder(dot_radius, dot_height),
+                translate = {
+                    x = dot.x,
+                    y = dot.y,
+                    z = p_top_z
+                }
+            })
         end
-    else
-        debug_log("Base mesh successfully loaded with integrated braille dots!")
     end
 
-    -- 4. Añadir orificios de montaje M3 (3.2 mm) si están habilitados como volúmenes negativos
+    -- 4. Añadir orificios de montaje M3 (3.2 mm) si están habilitados
     if mounting_holes then
         local hole_radius = 1.6
         local hole_height = base_thickness * 3
 
-        -- Resolver de forma segura el tipo de volumen negativo
         local neg_type = nil
-        if type(VolumeType) == "table" or type(VolumeType) == "userdata" then
-            neg_type = VolumeType.Negative or VolumeType.negative
-        elseif api and (type(api.VolumeType) == "table" or type(api.VolumeType) == "userdata") then
-            neg_type = api.VolumeType.Negative or api.VolumeType.negative
-        elseif api and api.project and (type(api.project.VolumeType) == "table" or type(api.project.VolumeType) == "userdata") then
-            neg_type = api.project.VolumeType.Negative or api.project.VolumeType.negative
+        pcall(function()
+            if VolumeType and VolumeType.Negative then
+                neg_type = VolumeType.Negative
+            elseif api and api.VolumeType and api.VolumeType.Negative then
+                neg_type = api.VolumeType.Negative
+            elseif api and api.project and api.project.VolumeType and api.project.VolumeType.Negative then
+                neg_type = api.project.VolumeType.Negative
+            end
+        end)
+
+        if neg_type then
+            table.insert(other_volumes, {
+                mesh = api.make_cylinder(hole_radius, hole_height),
+                type = neg_type,
+                translate = {
+                    x = p_min_x + (margin_x / 2),
+                    y = p_center_y,
+                    z = p_top_z - (hole_height / 2)
+                }
+            })
+            table.insert(other_volumes, {
+                mesh = api.make_cylinder(hole_radius, hole_height),
+                type = neg_type,
+                translate = {
+                    x = p_max_x - (margin_x / 2),
+                    y = p_center_y,
+                    z = p_top_z - (hole_height / 2)
+                }
+            })
         end
-        debug_log("Resolved negative volume type:", tostring(neg_type), "type of VolumeType global:", type(VolumeType))
-
-        local left_vol = {
-            mesh = api.make_cylinder(hole_radius, hole_height),
-            translate = {
-                x = p_min_x + (margin_x / 2),
-                y = p_center_y,
-                z = p_top_z - (hole_height / 2)
-            }
-        }
-        if neg_type then left_vol.type = neg_type end
-        table.insert(other_volumes, left_vol)
-
-        local right_vol = {
-            mesh = api.make_cylinder(hole_radius, hole_height),
-            translate = {
-                x = p_max_x - (margin_x / 2),
-                y = p_center_y,
-                z = p_top_z - (hole_height / 2)
-            }
-        }
-        if neg_type then right_vol.type = neg_type end
-        table.insert(other_volumes, right_vol)
     end
 
     -- 5. Posicionar texto visual centrado justo debajo del bloque Braille
@@ -571,28 +387,8 @@ local function run_execute(opts)
     end
 
     -- 6. Añadir el objeto completo a la bandeja
-    debug_log("Calling api.project:add_object with #other_volumes =", #other_volumes)
-    local ok_add, res_add = pcall(function()
-        return api.project:add_object {
-            mesh = base_mesh,
-            other_volumes = other_volumes
-        }
-    end)
-    debug_log("add_object status:", ok_add, "res:", tostring(res_add))
-    if not ok_add then
-        debug_log("CRITICAL ERROR adding object to project:", tostring(res_add))
-        error(res_add)
-    end
-    debug_log("=== EXECUTE FINISHED SUCCESSFULLY ===")
-end
-
-function execute(opts)
-    local ok, err = xpcall(function()
-        run_execute(opts)
-    end, debug.traceback)
-
-    if not ok then
-        debug_log("FATAL ERROR in execute:", tostring(err))
-        error(err)
-    end
+    api.project:add_object {
+        mesh = base_mesh,
+        other_volumes = other_volumes
+    }
 end
