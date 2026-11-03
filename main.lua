@@ -1,21 +1,70 @@
 --[[
-    3DEMS Braille Tactile Sign Generator
+    3DEMS Braille Tactile Sign Generator Pro
     Plugin para PrusaSlicer 3.0+
     Autor: 3DEMS (Author ID: 9d2f6477-ddc2-4189-b873-d0026dd7a4ef)
-    Estándar: Norma Marburg Medium para señalización táctil accesible
+    Estándares: ONCE (España), ADA (EE.UU.), Marburg Medium (Europa), AS 1428.1 (Australia)
 --]]
 
 info = {
     id = "braille_sign_generator",
     type = "project.plugin",
-    title = "Braille Tactile Sign",
+    title = "Braille Tactile Sign Pro",
     menu = "3DEMS/Braille Tactile Sign",
     params = {
         {name = "text", label = "Texto a traducir", type = "string", default = "SALIDA"},
+        {
+            name = "standard",
+            label = "Normativa Braille",
+            type = "combobox",
+            allowed_values = {
+                "ONCE / España (UNE 41500)",
+                "ADA / EE.UU. (Title III 703)",
+                "Marburg Medium (Europa / DIN EN 15823)",
+                "Australia / NZ (AS 1428.1)",
+                "Personalizado (Ajustes manuales)"
+            }
+        },
         {name = "include_visual_text", label = "Incluir texto visual debajo", type = "bool", default = true},
         {name = "mounting_holes", label = "Orificios para tornillos M3 (3.2 mm)", type = "bool", default = false},
         {name = "base_thickness", label = "Grosor de la base [mm]", type = "float", default = 2.4},
-        {name = "dot_height", label = "Altura de puntos Braille [mm]", type = "float", default = 0.6}
+        {name = "custom_dot_diameter", label = "[Manual] Diámetro de puntos [mm]", type = "float", default = 1.5},
+        {name = "custom_dot_height", label = "[Manual] Altura de puntos [mm]", type = "float", default = 0.6}
+    }
+}
+
+-- Definición de estándares y normativas oficiales de señalética accesible
+local STANDARDS = {
+    ["ONCE / España (UNE 41500)"] = {
+        dot_diameter = 1.5,
+        dot_height = 0.6,
+        dot_spacing_x = 2.5,
+        dot_spacing_y = 2.5,
+        cell_pitch_x = 6.2,
+        visual_gap = 8.0
+    },
+    ["ADA / EE.UU. (Title III 703)"] = {
+        dot_diameter = 1.55,
+        dot_height = 0.7,
+        dot_spacing_x = 2.4,
+        dot_spacing_y = 2.4,
+        cell_pitch_x = 6.3,
+        visual_gap = 9.5 -- Separación mínima ADA: 3/8 in (9.5 mm)
+    },
+    ["Marburg Medium (Europa / DIN EN 15823)"] = {
+        dot_diameter = 1.6,
+        dot_height = 0.55,
+        dot_spacing_x = 2.5,
+        dot_spacing_y = 2.5,
+        cell_pitch_x = 6.0,
+        visual_gap = 7.0
+    },
+    ["Australia / NZ (AS 1428.1)"] = {
+        dot_diameter = 1.45,
+        dot_height = 0.6,
+        dot_spacing_x = 2.3,
+        dot_spacing_y = 2.3,
+        cell_pitch_x = 6.0,
+        visual_gap = 7.5
     }
 }
 
@@ -99,7 +148,7 @@ local function text_to_braille_cells(str)
         local byte = string.byte(str, i)
         local c
         
-        -- Detección de caracteres multibyte UTF-8 (2 bytes para tildes/ñ)
+        -- Detección de caracteres multibyte UTF-8
         if byte >= 192 and byte <= 223 and (i + 1) <= len then
             c = string.sub(str, i, i + 1)
             i = i + 1
@@ -123,7 +172,6 @@ local function text_to_braille_cells(str)
             in_number_mode = false
             table.insert(cells, BRAILLE_MAP[c])
         else
-            -- Si no está en el mapa, intentar con minúscula básica o espacio neutro
             local lower_c = string.lower(c)
             if BRAILLE_MAP[lower_c] then
                 in_number_mode = false
@@ -144,17 +192,23 @@ function execute(opts)
     local text = opts.text or "SALIDA"
     if #text == 0 then text = "3DEMS" end
 
+    -- Obtener la configuración según la normativa seleccionada
+    local std_name = opts.standard or "ONCE / España (UNE 41500)"
+    local std_config = STANDARDS[std_name]
+
+    local dot_diameter = std_config and std_config.dot_diameter or (opts.custom_dot_diameter or 1.5)
+    local dot_height = std_config and std_config.dot_height or (opts.custom_dot_height or 0.6)
+    local dot_spacing_x = std_config and std_config.dot_spacing_x or 2.5
+    local dot_spacing_y = std_config and std_config.dot_spacing_y or 2.5
+    local cell_pitch_x = std_config and std_config.cell_pitch_x or 6.2
+    local gap_to_visual_text = std_config and std_config.visual_gap or 8.0
+
+    local dot_radius = dot_diameter / 2
     local base_thickness = opts.base_thickness or 2.4
-    local dot_height = opts.dot_height or 0.6
-    local dot_radius = 0.75 -- Diámetro 1.5 mm estándar
     local include_visual = opts.include_visual_text
     local mounting_holes = opts.mounting_holes
 
-    -- Dimensiones oficiales Marburg Medium
-    local dot_spacing_x = 2.5
-    local dot_spacing_y = 2.5
-    local cell_pitch_x = 6.0
-    local braille_cell_height = 5.0 -- 2 pasos de 2.5 mm entre filas 1 y 3
+    local braille_cell_height = dot_spacing_y * 2 -- De fila 1 a fila 3
 
     local cells = text_to_braille_cells(text)
     local num_cells = math.max(#cells, 1)
@@ -164,14 +218,12 @@ function execute(opts)
     local margin_x = mounting_holes and 18.0 or 12.0
     local margin_top = 8.0
     local margin_bottom = 8.0
-    local gap_to_visual_text = 6.0
 
     -- Preparar texto visual con la tipografía segura predeterminada
     local visual_mesh = nil
     local visual_width = 0
     local visual_height = 0
     if include_visual then
-        -- Buscar preferentemente Inter o NotoSans que tienen cobertura completa de tildes
         local font = api.get_font("Inter") or api.get_default_font()
         visual_mesh = api.emboss_text {
             font = font,
@@ -197,7 +249,7 @@ function execute(opts)
 
     local other_volumes = {}
 
-    -- Esfera base para los puntos Braille (semiesfera saliente)
+    -- Esfera base para los puntos Braille (semiesfera saliente con altura exacta de norma)
     local sphere_mesh = api.make_sphere(dot_radius)
     local dot_z = top_z - (dot_radius - dot_height)
 
