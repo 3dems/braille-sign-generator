@@ -1,0 +1,12 @@
+# Security: NEVER commit private keys or certificates
+*.pem
+private_key.pem
+dev_keys/
+
+# OS and Editor files
+.DS_Store
+Thumbs.db
+*.bak
+*.tmp
+.vscode/
+.idea/
