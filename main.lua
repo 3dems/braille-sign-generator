@@ -28,15 +28,15 @@ info = {
             label = "Geometría de puntos Braille",
             type = "combobox",
             allowed_values = {
-                "Pivote táctil (Recomendado boquilla 0.4 mm)",
-                "Semiesfera clásica (Para boquilla 0.25 mm / capa fina)"
+                "Cúpula esférica redondeada (Sensación táctil clásica)",
+                "Pivote cilíndrico (Máxima definición vertical)"
             }
         },
         {name = "include_visual_text", label = "Incluir texto visual debajo", type = "bool", default = true},
         {name = "mounting_holes", label = "Orificios para tornillos M3 (3.2 mm)", type = "bool", default = false},
         {name = "base_thickness", label = "Grosor de la base [mm]", type = "float", default = 2.4},
         {name = "custom_dot_diameter", label = "[Manual] Diámetro de puntos [mm]", type = "float", default = 1.6},
-        {name = "custom_dot_height", label = "[Manual] Altura de puntos [mm]", type = "float", default = 0.6}
+        {name = "custom_dot_height", label = "[Manual] Altura de puntos [mm]", type = "float", default = 0.7}
     }
 }
 
@@ -44,7 +44,7 @@ info = {
 local STANDARDS = {
     ["Europa / España (ONCE - Marburg)"] = {
         dot_diameter = 1.6, -- Óptimo para laminado con boquilla 0.4
-        dot_height = 0.6,
+        dot_height = 0.7,
         dot_spacing_x = 2.5,
         dot_spacing_y = 2.5,
         cell_pitch_x = 6.2,
@@ -59,8 +59,8 @@ local STANDARDS = {
         visual_gap = 9.5 -- Separación legal obligatoria en EE.UU.: 3/8 in (9.5 mm)
     },
     ["Internacional / Compacto (BANA)"] = {
-        dot_diameter = 1.5,
-        dot_height = 0.6,
+        dot_diameter = 1.6,
+        dot_height = 0.7,
         dot_spacing_x = 2.3,
         dot_spacing_y = 2.3,
         cell_pitch_x = 6.0,
@@ -258,20 +258,18 @@ function execute(opts)
 
     local other_volumes = {}
 
-    -- 3. Crear malla del punto Braille según la geometría elegida
-    -- En FDM con boquilla 0.4 mm, un cilindro de diámetro constante se lamina al 100%
-    -- mientras que una esfera pura es descartada por el generador de perímetros Arachne
-    local dot_mesh
+    -- 3. Crear puntos Braille según la geometría elegida
+    -- La opción por defecto "Cúpula esférica" da el tacto clásico suave normalizado.
+    local is_sphere = (string.find(dot_shape, "cilíndrico") == nil)
+    local dot_sphere_radius = (dot_diameter / 2) + 0.05
     local dot_z
-    local use_sphere = string.find(dot_shape, "Semiesfera") ~= nil
 
-    if use_sphere then
-        dot_mesh = api.make_sphere(dot_radius)
-        dot_z = p_top_z - (dot_radius - dot_height)
+    if is_sphere then
+        -- Cúpula esférica: el ápice sobresale exactamente dot_height sobre la placa
+        dot_z = (p_top_z + dot_height) - dot_sphere_radius
     else
-        -- Cilindro con penetración de 0.1 mm en la placa para fusionarse como una sola masa
+        -- Pivote cilíndrico
         local embed = 0.1
-        dot_mesh = api.make_cylinder(dot_radius, dot_height + embed)
         dot_z = p_top_z - embed
     end
 
@@ -296,6 +294,13 @@ function execute(opts)
         for _, dot_num in ipairs(cell_dots) do
             local offset = DOT_OFFSETS[dot_num]
             if offset then
+                local dot_mesh
+                if is_sphere then
+                    dot_mesh = api.make_sphere(dot_sphere_radius)
+                else
+                    dot_mesh = api.make_cylinder(dot_radius, dot_height + 0.1)
+                end
+
                 table.insert(other_volumes, {
                     mesh = dot_mesh,
                     translate = {
@@ -328,11 +333,10 @@ function execute(opts)
     if mounting_holes then
         local hole_radius = 1.6
         local hole_height = base_thickness * 3
-        local hole_mesh = api.make_cylinder(hole_radius, hole_height)
 
         -- Agujero izquierdo
         table.insert(other_volumes, {
-            mesh = hole_mesh,
+            mesh = api.make_cylinder(hole_radius, hole_height),
             type = VolumeType.Negative,
             translate = {
                 x = p_min_x + (margin_x / 2),
@@ -343,7 +347,7 @@ function execute(opts)
 
         -- Agujero derecho
         table.insert(other_volumes, {
-            mesh = hole_mesh,
+            mesh = api.make_cylinder(hole_radius, hole_height),
             type = VolumeType.Negative,
             translate = {
                 x = p_max_x - (margin_x / 2),
