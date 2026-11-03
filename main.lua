@@ -5,6 +5,22 @@
     Estándares principales: Europa/España (ONCE), América/EE.UU. (ADA), Internacional (BANA)
 --]]
 
+local function debug_log(...)
+    local log_path = "C:/Users/Eliu/AppData/Local/Temp/braille_plugin_debug.log"
+    local f = io.open(log_path, "a")
+    if f then
+        local parts = {...}
+        local str = ""
+        for i, p in ipairs(parts) do
+            str = str .. (i > 1 and " " or "") .. tostring(p)
+        end
+        f:write(os.date("%Y-%m-%d %H:%M:%S") .. " [BRAILLE] " .. str .. "\n")
+        f:close()
+    end
+end
+
+debug_log("main.lua loaded! Initializing plugin...")
+
 info = {
     id = "braille_sign_generator",
     type = "project.plugin",
@@ -324,7 +340,15 @@ local function write_braille_plate_stl(filepath, width, height, thickness, dots,
     return true
 end
 
-function execute(opts)
+local function run_execute(opts)
+    opts = opts or {}
+    debug_log("=== EXECUTE STARTED ===")
+    debug_log("opts.text:", opts.text)
+    debug_log("opts.mounting_holes:", opts.mounting_holes)
+    debug_log("opts.include_visual_text:", opts.include_visual_text)
+    debug_log("opts.standard:", opts.standard)
+    debug_log("opts.dot_shape:", opts.dot_shape)
+
     local text = opts.text or "Baño hombres"
     if #text == 0 then text = "3DEMS" end
 
@@ -341,8 +365,8 @@ function execute(opts)
 
     local dot_radius = dot_diameter / 2
     local base_thickness = opts.base_thickness or 2.4
-    local include_visual = opts.include_visual_text
-    local mounting_holes = opts.mounting_holes
+    local include_visual = (opts.include_visual_text ~= false)
+    local mounting_holes = (opts.mounting_holes == true)
     local dot_shape = opts.dot_shape or "Cúpula esférica redondeada (Sensación táctil clásica)"
 
     local braille_cell_height = dot_spacing_y * 2 -- De fila 1 a fila 3 (5.0 mm)
@@ -362,15 +386,27 @@ function execute(opts)
     local visual_height = 0
     local vb = nil
     if include_visual then
-        local font = api.get_font("Inter") or api.get_default_font()
-        visual_mesh = api.emboss_text {
-            font = font,
-            text = text,
-            depth = 0.8
-        }
-        vb = visual_mesh:bounds()
-        visual_width = vb.max_x - vb.min_x
-        visual_height = vb.max_y - vb.min_y
+        debug_log("Generating visual text...")
+        local ok_font, font = pcall(function() return api.get_font("Inter") or api.get_default_font() end)
+        if not ok_font or not font then
+            font = api.get_default_font()
+        end
+        local ok_emboss, em = pcall(function()
+            return api.emboss_text {
+                font = font,
+                text = text,
+                depth = 0.8
+            }
+        end)
+        if ok_emboss and em then
+            visual_mesh = em
+            vb = visual_mesh:bounds()
+            visual_width = vb.max_x - vb.min_x
+            visual_height = vb.max_y - vb.min_y
+            debug_log("Visual text bounds: width=", visual_width, "height=", visual_height)
+        else
+            debug_log("Visual text emboss failed:", tostring(em))
+        end
     end
 
     -- Calcular tamaño total de la placa base
@@ -419,19 +455,34 @@ function execute(opts)
             end
         end
     end
+    debug_log("Total braille dots calculated:", #dots)
 
     -- 3. Generar la placa base con los puntos Braille integrados en un prisma 100% sólido y continuo
-    -- Al estar en la misma malla manifold, PrusaSlicer 3.0 lamina el 100% de los puntos sin omitirlos
-    local temp_dir = os.getenv("TEMP") or os.getenv("TMP") or "C:/Windows/Temp"
-    local stl_path = temp_dir:gsub("\\", "/") .. "/ps_braille_base_" .. tostring(os.time()) .. ".stl"
+    local plugin_dir = "./"
+    local info_src = debug.getinfo(1, "S")
+    if info_src and info_src.source and info_src.source:sub(1,1) == "@" then
+        local src_path = info_src.source:sub(2)
+        plugin_dir = src_path:match("(.*[/\\])") or "./"
+    end
+    debug_log("Plugin directory resolved to:", plugin_dir)
 
+    -- Intentar escribir dentro del directorio del plugin primero, y si no en TEMP
+    local stl_filename = "temp_braille_base_" .. tostring(os.time()) .. ".stl"
+    local stl_path = plugin_dir:gsub("\\", "/") .. "/" .. stl_filename
     local ok_write = write_braille_plate_stl(stl_path, plate_width, plate_height, base_thickness, dots, dot_radius, dot_height, is_sphere)
+    if not ok_write then
+        local temp_dir = os.getenv("TEMP") or os.getenv("TMP") or "C:/Windows/Temp"
+        stl_path = temp_dir:gsub("\\", "/") .. "/" .. stl_filename
+        ok_write = write_braille_plate_stl(stl_path, plate_width, plate_height, base_thickness, dots, dot_radius, dot_height, is_sphere)
+    end
+    debug_log("write_braille_plate_stl ok_write:", ok_write, "stl_path:", stl_path)
 
     local base_mesh = nil
     if ok_write then
-        local ok_load, loaded = pcall(function() return api.load_stl(stl_path) end)
-        if ok_load and loaded then
-            base_mesh = loaded
+        local ok_load, res = pcall(function() return api.load_stl(stl_path) end)
+        debug_log("api.load_stl status:", ok_load, "result type:", type(res), "result:", tostring(res))
+        if ok_load and res then
+            base_mesh = res
         end
         pcall(function() os.remove(stl_path) end)
     end
@@ -440,6 +491,7 @@ function execute(opts)
 
     -- Fallback si api.load_stl no estuviese disponible
     if not base_mesh then
+        debug_log("Base mesh is nil! Falling back to api.make_cube + individual dots...")
         base_mesh = api.make_cube(plate_width, plate_height, base_thickness)
         for _, dot in ipairs(dots) do
             local dot_mesh
@@ -457,6 +509,8 @@ function execute(opts)
                 })
             end
         end
+    else
+        debug_log("Base mesh successfully loaded with integrated braille dots!")
     end
 
     -- 4. Añadir orificios de montaje M3 (3.2 mm) si están habilitados como volúmenes negativos
@@ -464,27 +518,38 @@ function execute(opts)
         local hole_radius = 1.6
         local hole_height = base_thickness * 3
 
-        -- Agujero izquierdo
-        table.insert(other_volumes, {
+        -- Resolver de forma segura el tipo de volumen negativo
+        local neg_type = nil
+        if type(VolumeType) == "table" or type(VolumeType) == "userdata" then
+            neg_type = VolumeType.Negative or VolumeType.negative
+        elseif api and (type(api.VolumeType) == "table" or type(api.VolumeType) == "userdata") then
+            neg_type = api.VolumeType.Negative or api.VolumeType.negative
+        elseif api and api.project and (type(api.project.VolumeType) == "table" or type(api.project.VolumeType) == "userdata") then
+            neg_type = api.project.VolumeType.Negative or api.project.VolumeType.negative
+        end
+        debug_log("Resolved negative volume type:", tostring(neg_type), "type of VolumeType global:", type(VolumeType))
+
+        local left_vol = {
             mesh = api.make_cylinder(hole_radius, hole_height),
-            type = VolumeType.Negative,
             translate = {
                 x = p_min_x + (margin_x / 2),
                 y = p_center_y,
                 z = p_top_z - (hole_height / 2)
             }
-        })
+        }
+        if neg_type then left_vol.type = neg_type end
+        table.insert(other_volumes, left_vol)
 
-        -- Agujero derecho
-        table.insert(other_volumes, {
+        local right_vol = {
             mesh = api.make_cylinder(hole_radius, hole_height),
-            type = VolumeType.Negative,
             translate = {
                 x = p_max_x - (margin_x / 2),
                 y = p_center_y,
                 z = p_top_z - (hole_height / 2)
             }
-        })
+        }
+        if neg_type then right_vol.type = neg_type end
+        table.insert(other_volumes, right_vol)
     end
 
     -- 5. Posicionar texto visual centrado justo debajo del bloque Braille
@@ -504,8 +569,28 @@ function execute(opts)
     end
 
     -- 6. Añadir el objeto completo a la bandeja
-    api.project:add_object {
-        mesh = base_mesh,
-        other_volumes = other_volumes
-    }
+    debug_log("Calling api.project:add_object with #other_volumes =", #other_volumes)
+    local ok_add, res_add = pcall(function()
+        return api.project:add_object {
+            mesh = base_mesh,
+            other_volumes = other_volumes
+        }
+    end)
+    debug_log("add_object status:", ok_add, "res:", tostring(res_add))
+    if not ok_add then
+        debug_log("CRITICAL ERROR adding object to project:", tostring(res_add))
+        error(res_add)
+    end
+    debug_log("=== EXECUTE FINISHED SUCCESSFULLY ===")
+end
+
+function execute(opts)
+    local ok, err = xpcall(function()
+        run_execute(opts)
+    end, debug.traceback)
+
+    if not ok then
+        debug_log("FATAL ERROR in execute:", tostring(err))
+        error(err)
+    end
 end
