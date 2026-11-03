@@ -238,13 +238,13 @@ function execute(opts)
     local bb = base_mesh:bounds()
 
     -- Puntos de referencia geométricos absolutos de la placa base
-    local p_min_x = bb.min_x
-    local p_max_x = bb.max_x
-    local p_min_y = bb.min_y
-    local p_max_y = bb.max_y
+    local p_min_x = (bb and bb.max_x > bb.min_x) and bb.min_x or 0
+    local p_max_x = (bb and bb.max_x > bb.min_x) and bb.max_x or plate_width
+    local p_min_y = (bb and bb.max_y > bb.min_y) and bb.min_y or 0
+    local p_max_y = (bb and bb.max_y > bb.min_y) and bb.max_y or plate_height
     local p_center_x = (p_min_x + p_max_x) / 2
     local p_center_y = (p_min_y + p_max_y) / 2
-    local p_top_z = bb.max_z
+    local p_top_z = (bb and bb.max_z > bb.min_z) and bb.max_z or base_thickness
 
     local other_volumes = {}
 
