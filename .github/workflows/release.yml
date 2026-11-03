@@ -17,3 +17,5 @@ jobs:
 
       - name: Publish to Prusa Plugin Marketplace
         uses: prusa3d/plugin-marketplace-publish@v1
+        with:
+          private-key: ${{ secrets.PRUSA_SLICER_PLUGIN_MARKETPLACE_SIGNING_KEY }}
