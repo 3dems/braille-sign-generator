@@ -11,7 +11,7 @@ info = {
     title = "Braille Tactile Sign Pro",
     menu = "3DEMS/Braille Tactile Sign",
     params = {
-        {name = "text", label = "Texto a traducir", type = "string", default = "SALIDA"},
+        {name = "text", label = "Texto a traducir", type = "string", default = "Baño hombres"},
         {
             name = "standard",
             label = "Estándar / Región",
@@ -139,7 +139,7 @@ local function text_to_braille_cells(str)
         local byte = string.byte(str, i)
         local c
         
-        -- Detección de caracteres multibyte UTF-8
+        -- Detección de caracteres multibyte UTF-8 (2 bytes para tildes/ñ)
         if byte >= 192 and byte <= 223 and (i + 1) <= len then
             c = string.sub(str, i, i + 1)
             i = i + 1
@@ -180,7 +180,7 @@ local function text_to_braille_cells(str)
 end
 
 function execute(opts)
-    local text = opts.text or "SALIDA"
+    local text = opts.text or "Baño hombres"
     if #text == 0 then text = "3DEMS" end
 
     -- Obtener la configuración según la normativa seleccionada
@@ -199,21 +199,22 @@ function execute(opts)
     local include_visual = opts.include_visual_text
     local mounting_holes = opts.mounting_holes
 
-    local braille_cell_height = dot_spacing_y * 2 -- De fila 1 a fila 3
+    local braille_cell_height = dot_spacing_y * 2 -- De fila 1 a fila 3 (5.0 mm)
 
     local cells = text_to_braille_cells(text)
     local num_cells = math.max(#cells, 1)
 
     local braille_width = (num_cells - 1) * cell_pitch_x + dot_spacing_x
 
-    local margin_x = mounting_holes and 18.0 or 12.0
+    local margin_x = mounting_holes and 20.0 or 14.0
     local margin_top = 8.0
     local margin_bottom = 8.0
 
-    -- Preparar texto visual con la tipografía segura predeterminada
+    -- 1. Preparar texto visual si está habilitado
     local visual_mesh = nil
     local visual_width = 0
     local visual_height = 0
+    local vb = nil
     if include_visual then
         local font = api.get_font("Inter") or api.get_default_font()
         visual_mesh = api.emboss_text {
@@ -221,30 +222,41 @@ function execute(opts)
             text = text,
             depth = 0.8
         }
-        local vb = visual_mesh:bounds()
+        vb = visual_mesh:bounds()
         visual_width = vb.max_x - vb.min_x
         visual_height = vb.max_y - vb.min_y
     end
 
+    -- Calcular tamaño total de la placa base
     local content_width = math.max(braille_width, visual_width)
-    local plate_width = content_width + margin_x * 2
+    local plate_width = content_width + (margin_x * 2)
     local total_content_height = braille_cell_height + (include_visual and (gap_to_visual_text + visual_height) or 0)
     local plate_height = total_content_height + margin_top + margin_bottom
 
-    -- 1. Crear placa base y obtener sus dimensiones reales
+    -- 2. Crear placa base como prisma sólido
     local base_mesh = api.make_cube(plate_width, plate_height, base_thickness)
     local bb = base_mesh:bounds()
-    local cx = (bb.max_x + bb.min_x) / 2
-    local cy = (bb.max_y + bb.min_y) / 2
-    local top_z = bb.max_z
+
+    -- Puntos de referencia geométricos absolutos de la placa base
+    local p_min_x = bb.min_x
+    local p_max_x = bb.max_x
+    local p_min_y = bb.min_y
+    local p_max_y = bb.max_y
+    local p_center_x = (p_min_x + p_max_x) / 2
+    local p_center_y = (p_min_y + p_max_y) / 2
+    local p_top_z = bb.max_z
 
     local other_volumes = {}
 
-    -- Esfera base para los puntos Braille (semiesfera ergonómica)
+    -- 3. Calcular posición exacta de los puntos Braille
     local sphere_mesh = api.make_sphere(dot_radius)
-    local dot_z = top_z - (dot_radius - dot_height)
+    -- Se entierra ligeramente (0.05 mm) en la placa para fusión booleana perfecta
+    local dot_z = p_top_z - (dot_radius - dot_height)
 
-    -- Mapeo de coordenadas relativas para los 6 puntos de la celda
+    -- Coordenadas de los 6 puntos dentro de cada celda Braille
+    -- Fila superior (1, 4): offset +dot_spacing_y
+    -- Fila media    (2, 5): offset 0
+    -- Fila inferior (3, 6): offset -dot_spacing_y
     local DOT_OFFSETS = {
         [1] = {x = 0, y = dot_spacing_y},
         [2] = {x = 0, y = 0},
@@ -254,14 +266,13 @@ function execute(opts)
         [6] = {x = dot_spacing_x, y = -dot_spacing_y}
     }
 
-    -- Centrado relativo al centro de la placa base (cx, cy)
-    local braille_start_x = cx - (braille_width / 2)
-    local braille_center_y = cy
+    local braille_start_x = p_center_x - (braille_width / 2)
+    local braille_center_y = p_center_y
     if include_visual then
-        braille_center_y = cy + (plate_height / 2) - margin_top - (braille_cell_height / 2)
+        -- En la mitad superior de la placa
+        braille_center_y = p_max_y - margin_top - (braille_cell_height / 2)
     end
 
-    -- 2. Posicionar puntos Braille
     for cell_idx, cell_dots in ipairs(cells) do
         local cell_x = braille_start_x + (cell_idx - 1) * cell_pitch_x
         for _, dot_num in ipairs(cell_dots) do
@@ -269,6 +280,7 @@ function execute(opts)
             if offset then
                 table.insert(other_volumes, {
                     mesh = sphere_mesh,
+                    type = VolumeType.Model,
                     translate = {
                         x = cell_x + offset.x,
                         y = braille_center_y + offset.y,
@@ -279,38 +291,37 @@ function execute(opts)
         end
     end
 
-    -- 3. Posicionar texto visual centrado en la parte inferior de la placa
-    if include_visual and visual_mesh then
-        local vb = visual_mesh:bounds()
-        local visual_cx = (vb.max_x + vb.min_x) / 2
-        local visual_cy = (vb.max_y + vb.min_y) / 2
-        local target_y = cy - (plate_height / 2) + margin_bottom + (visual_height / 2)
+    -- 4. Posicionar texto visual centrado justo debajo del bloque Braille
+    if include_visual and visual_mesh and vb then
+        local visual_local_cx = (vb.max_x + vb.min_x) / 2
+        local visual_local_cy = (vb.max_y + vb.min_y) / 2
+        local visual_target_y = p_min_y + margin_bottom + (visual_height / 2)
 
         table.insert(other_volumes, {
             mesh = visual_mesh,
+            type = VolumeType.Model,
             translate = {
-                x = cx - visual_cx,
-                y = target_y - visual_cy,
-                z = top_z
+                x = p_center_x - visual_local_cx,
+                y = visual_target_y - visual_local_cy,
+                z = p_top_z - vb.min_z - 0.05 -- Leve penetración de 0.05 mm para fusión sólida
             }
         })
     end
 
-    -- 4. Añadir orificios de montaje M3 (3.2 mm) con sustracción booleana
+    -- 5. Añadir orificios de montaje M3 (3.2 mm) si están habilitados
     if mounting_holes then
         local hole_radius = 1.6
         local hole_height = base_thickness * 3
         local hole_mesh = api.make_cylinder(hole_radius, hole_height)
-        local hole_dist_x = (plate_width / 2) - (margin_x / 2)
 
         -- Agujero izquierdo
         table.insert(other_volumes, {
             mesh = hole_mesh,
             type = VolumeType.Negative,
             translate = {
-                x = cx - hole_dist_x,
-                y = cy,
-                z = top_z - (hole_height / 2)
+                x = p_min_x + (margin_x / 2),
+                y = p_center_y,
+                z = p_top_z - (hole_height / 2)
             }
         })
 
@@ -319,21 +330,16 @@ function execute(opts)
             mesh = hole_mesh,
             type = VolumeType.Negative,
             translate = {
-                x = cx + hole_dist_x,
-                y = cy,
-                z = top_z - (hole_height / 2)
+                x = p_max_x - (margin_x / 2),
+                y = p_center_y,
+                z = p_top_z - (hole_height / 2)
             }
         })
     end
 
-    -- 5. Añadir el objeto a la bandeja activa
+    -- 6. Añadir el objeto completo a la bandeja
     api.project:add_object {
         mesh = base_mesh,
-        other_volumes = other_volumes,
-        translate = {
-            x = 0,
-            y = 0,
-            z = -bb.min_z
-        }
+        other_volumes = other_volumes
     }
 end
