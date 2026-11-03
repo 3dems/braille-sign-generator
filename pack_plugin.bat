@@ -1,16 +1,27 @@
 @echo off
 cd /d "%~dp0"
 echo ============================================================
-echo   Empaquetando Plugin: io.github.3dems.braille-sign-generator
+echo   Empaquetando y Firmando Plugin: io.github.3dems.braille-sign-generator
 echo ============================================================
 
-set OUT_ZIP=%~dp0io.github.3dems.braille-sign-generator.zip
+set PS_EXE=D:\3D\PrusaSlicer\PrusaSlicer-3.0.0-alpha13\PrusaSlicer.exe
+set PRIV_KEY=D:\3d\prusaslicer\keys\private_key.pem
+set TARGET_DIR=%APPDATA%\PrusaSlicer3-dev\lua\io.github.3dems.braille-sign-generator
 
-if exist "%OUT_ZIP%" del "%OUT_ZIP%"
+if not exist "%TARGET_DIR%" mkdir "%TARGET_DIR%"
 
-powershell -Command "Compress-Archive -Path 'manifest.json', 'main.lua', 'README.md' -DestinationPath '%OUT_ZIP%'"
+echo Copiando archivos a PrusaSlicer...
+copy /Y "manifest.json" "%TARGET_DIR%\"
+copy /Y "main.lua" "%TARGET_DIR%\"
 
-echo [OK] Paquete generado con exito en:
-echo %OUT_ZIP%
+if exist "%PRIV_KEY%" (
+    echo Firmando plugin con la clave privada de desarrollador...
+    "%PS_EXE%" plugin sign -f -P "%PRIV_KEY%" "%TARGET_DIR%"
+)
+
+echo.
+echo ============================================================
+echo   [OK] Plugin actualizado y firmado en PrusaSlicer con exito
+echo ============================================================
 echo.
 pause

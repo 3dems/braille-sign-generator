@@ -6,20 +6,22 @@
 --]]
 
 local function debug_log(...)
-    local log_path = "C:/Users/Eliu/AppData/Local/Temp/braille_plugin_debug.log"
-    local f = io.open(log_path, "a")
-    if f then
-        local parts = {...}
-        local str = ""
-        for i, p in ipairs(parts) do
-            str = str .. (i > 1 and " " or "") .. tostring(p)
+    if not io or not io.open then return end
+    local args = {...}
+    pcall(function()
+        local log_path = "C:/Users/Eliu/AppData/Local/Temp/braille_plugin_debug.log"
+        local f = io.open(log_path, "a")
+        if f then
+            local str = ""
+            for i, p in ipairs(args) do
+                str = str .. (i > 1 and " " or "") .. tostring(p)
+            end
+            local t = (os and os.date) and os.date("%Y-%m-%d %H:%M:%S") or ""
+            f:write(t .. " [BRAILLE] " .. str .. "\n")
+            f:close()
         end
-        f:write(os.date("%Y-%m-%d %H:%M:%S") .. " [BRAILLE] " .. str .. "\n")
-        f:close()
-    end
+    end)
 end
-
-debug_log("main.lua loaded! Initializing plugin...")
 
 info = {
     id = "braille_sign_generator",
