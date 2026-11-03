@@ -15,8 +15,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Remove local development scripts (Marketplace archive-policy)
-        run: rm -f pack_plugin.bat *.bat *.cmd *.sh *.ps1
+      - name: Clean bundle for Marketplace archive-policy (Allowed: .lua, .json, .stl, .svg, .png, .md, .txt)
+        run: |
+          rm -f .gitignore pack_plugin.bat *.bat *.cmd *.sh *.ps1 LICENSE
+          find . -maxdepth 2 -type f ! -name "*.lua" ! -name "*.json" ! -name "*.stl" ! -name "*.svg" ! -name "*.png" ! -name "*.md" ! -name "*.txt" ! -path "./.github/*" -exec rm -f {} +
 
       - name: Publish to Prusa Plugin Marketplace
         uses: prusa3d/plugin-marketplace-publish@v1
