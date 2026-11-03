@@ -15,6 +15,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Remove local development scripts (Marketplace archive-policy)
+        run: rm -f pack_plugin.bat *.bat *.cmd *.sh *.ps1
+
       - name: Publish to Prusa Plugin Marketplace
         uses: prusa3d/plugin-marketplace-publish@v1
         with:
