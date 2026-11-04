@@ -8,8 +8,8 @@
 info = {
     id = "braille_sign_generator",
     type = "project.plugin",
-    title = "Braille Tactile Sign Pro",
-    menu = "3DEMS/Braille Tactile Sign",
+    title = "Braille Sign Generator",
+    menu = "3DEMS/Braille Sign Generator",
     params = {
         {name = "text", label = "Texto a traducir", type = "string", default = "Baño hombres"},
         {

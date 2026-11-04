@@ -1,10 +1,10 @@
 {
 	"id": "io.github.3dems.braille-sign-generator",
-	"name": "Braille Tactile Sign Generator",
-	"version": "1.0.6",
+	"name": "Braille Sign Generator",
+	"version": "1.0.7",
 	"min_slicer_version": "3.0.0-alpha11",
 	"author": "9d2f6477-ddc2-4189-b873-d0026dd7a4ef",
-	"description": "Generador de señalización táctil y placas accesibles en sistema Braille con texto visual y orificios de montaje.",
+	"description": "Custom tactile & ADA Braille signs with auto grade-1/2 translation. Carteles y senalizacion tactil accesible.",
 	"license": "AGPL-3.0-only",
 	"required_apis": {
 		"project.plugin": "1.0.0"
