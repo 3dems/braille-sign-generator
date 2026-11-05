@@ -1,8 +1,8 @@
 --[[
-    3DEMS Braille Tactile Sign Generator Pro
-    Plugin para PrusaSlicer 3.0+
-    Autor: 3DEMS (Author ID: 9d2f6477-ddc2-4189-b873-d0026dd7a4ef)
-    Estándares principales: Europa/España (ONCE), América/EE.UU. (ADA), Internacional (BANA)
+    3DEMS Braille Sign Generator Pro
+    Official PrusaSlicer 3.0+ Plugin
+    Author: 3DEMS (Author ID: 9d2f6477-ddc2-4189-b873-d0026dd7a4ef)
+    Supported Standards: North America / USA (ADA), Europe / Spain (ONCE - Marburg), International (BANA)
 --]]
 
 info = {
@@ -11,54 +11,56 @@ info = {
     title = "Braille Sign Generator",
     menu = "3DEMS/Braille Sign Generator",
     params = {
-        {name = "text", label = "Texto a traducir", type = "string", default = "Baño hombres"},
+        {name = "text", label = "Text to translate", type = "string", default = "Restroom"},
         {
             name = "standard",
-            label = "Estándar / Región",
+            label = "Standard / Regulatory Region",
             type = "combobox",
+            default = "North America / USA (ADA Standard)",
             allowed_values = {
-                "Europa / España (ONCE - Marburg)",
-                "América / EE.UU. (ADA Standard)",
-                "Internacional / Compacto (BANA)",
-                "Personalizado (Ajuste manual)"
+                "North America / USA (ADA Standard)",
+                "Europe / Spain (ONCE - Marburg Medium)",
+                "International / Compact (BANA)",
+                "Custom (Manual adjustment below)"
             }
         },
         {
             name = "dot_shape",
-            label = "Geometría de puntos Braille",
+            label = "Braille dot geometry",
             type = "combobox",
+            default = "Spherical Dome (Classic tactile feel)",
             allowed_values = {
-                "Cúpula esférica redondeada (Sensación táctil clásica)",
-                "Pivote cilíndrico (Máxima definición vertical)"
+                "Spherical Dome (Classic tactile feel)",
+                "Cylindrical Pin (High vertical definition)"
             }
         },
-        {name = "include_visual_text", label = "Incluir texto visual debajo", type = "bool", default = true},
-        {name = "mounting_holes", label = "Orificios para tornillos M3 (3.2 mm)", type = "bool", default = false},
-        {name = "base_thickness", label = "Grosor de la base [mm]", type = "float", default = 2.4},
-        {name = "custom_dot_diameter", label = "[Manual] Diámetro de puntos [mm]", type = "float", default = 1.6},
-        {name = "custom_dot_height", label = "[Manual] Altura de puntos [mm]", type = "float", default = 0.7}
+        {name = "include_visual_text", label = "Include visual embossed text below", type = "bool", default = true},
+        {name = "mounting_holes", label = "M3 screw mounting holes (3.2 mm)", type = "bool", default = false},
+        {name = "base_thickness", label = "Base plate thickness [mm]", type = "float", default = 2.4},
+        {name = "custom_dot_diameter", label = "[Manual] Dot diameter [mm]", type = "float", default = 1.6},
+        {name = "custom_dot_height", label = "[Manual] Dot height [mm]", type = "float", default = 0.7}
     }
 }
 
--- Los 3 grandes estándares mundiales de señalética Braille
+-- Regulatory Braille signage dimensional standards
 local STANDARDS = {
-    ["Europa / España (ONCE - Marburg)"] = {
-        dot_diameter = 1.6, -- Óptimo para laminado con boquilla 0.4
+    ["North America / USA (ADA Standard)"] = {
+        dot_diameter = 1.6,
+        dot_height = 0.7,
+        dot_spacing_x = 2.4,
+        dot_spacing_y = 2.4,
+        cell_pitch_x = 6.3,
+        visual_gap = 9.5 -- Federal ADA regulation: 3/8 in (9.5 mm)
+    },
+    ["Europe / Spain (ONCE - Marburg Medium)"] = {
+        dot_diameter = 1.6,
         dot_height = 0.7,
         dot_spacing_x = 2.5,
         dot_spacing_y = 2.5,
         cell_pitch_x = 6.2,
         visual_gap = 8.0
     },
-    ["América / EE.UU. (ADA Standard)"] = {
-        dot_diameter = 1.6,
-        dot_height = 0.7,
-        dot_spacing_x = 2.4,
-        dot_spacing_y = 2.4,
-        cell_pitch_x = 6.3,
-        visual_gap = 9.5 -- Separación legal obligatoria en EE.UU.: 3/8 in (9.5 mm)
-    },
-    ["Internacional / Compacto (BANA)"] = {
+    ["International / Compact (BANA)"] = {
         dot_diameter = 1.6,
         dot_height = 0.7,
         dot_spacing_x = 2.3,
@@ -68,11 +70,10 @@ local STANDARDS = {
     }
 }
 
--- Mapeo completo de celdas Braille estándar (6 puntos)
--- Columna 1 (izq): 1, 2, 3
--- Columna 2 (der): 4, 5, 6
+-- Complete 6-dot Braille standard mapping
+-- Column 1 (left): 1, 2, 3
+-- Column 2 (right): 4, 5, 6
 local BRAILLE_MAP = {
-    -- Letras básicas (minúsculas y mayúsculas ASCII)
     ['a'] = {1}, ['A'] = {1},
     ['b'] = {1, 2}, ['B'] = {1, 2},
     ['c'] = {1, 4}, ['C'] = {1, 4},
@@ -99,8 +100,8 @@ local BRAILLE_MAP = {
     ['x'] = {1, 3, 4, 6}, ['X'] = {1, 3, 4, 6},
     ['y'] = {1, 3, 4, 5, 6}, ['Y'] = {1, 3, 4, 5, 6},
     ['z'] = {1, 3, 5, 6}, ['Z'] = {1, 3, 5, 6},
-    
-    -- Castellano: vocales con tilde y diéresis (minúsculas y mayúsculas UTF-8)
+
+    -- Spanish & European accented vowels and special characters
     ['á'] = {1, 2, 3, 5, 6}, ['Á'] = {1, 2, 3, 5, 6},
     ['é'] = {2, 3, 4, 6},    ['É'] = {2, 3, 4, 6},
     ['í'] = {3, 4},          ['Í'] = {3, 4},
@@ -109,62 +110,69 @@ local BRAILLE_MAP = {
     ['ü'] = {1, 2, 5, 6},    ['Ü'] = {1, 2, 5, 6},
     ['ñ'] = {1, 2, 4, 5, 6}, ['Ñ'] = {1, 2, 4, 5, 6},
 
-    -- Puntuación y símbolos habituales
+    -- Space and punctuation
+    [' '] = {},
     ['.'] = {3},
     [','] = {2},
     [';'] = {2, 3},
     [':'] = {2, 5},
-    ['-'] = {3, 6},
     ['!'] = {2, 3, 5},
     ['?'] = {2, 6},
-    ['('] = {2, 3, 5, 6},
-    [')'] = {2, 3, 5, 6},
-    ['/'] = {3, 4}
+    ['-'] = {3, 6},
+    ['('] = {2, 3, 6},
+    [')'] = {3, 5, 6}
 }
 
--- Mapeo de dígitos con prefijo numérico (# = 3, 4, 5, 6)
-local NUMBER_SIGN = {3, 4, 5, 6}
+-- Braille number sign prefix (dots 3, 4, 5, 6)
+local NUMBER_PREFIX = {3, 4, 5, 6}
+
+-- Digits mapped to Braille letters a-j
 local DIGIT_MAP = {
-    ['1'] = {1},
-    ['2'] = {1, 2},
-    ['3'] = {1, 4},
-    ['4'] = {1, 4, 5},
-    ['5'] = {1, 5},
-    ['6'] = {1, 2, 4},
-    ['7'] = {1, 2, 4, 5},
-    ['8'] = {1, 2, 5},
-    ['9'] = {2, 4},
-    ['0'] = {2, 4, 5}
+    ['1'] = {1},          -- 'a'
+    ['2'] = {1, 2},       -- 'b'
+    ['3'] = {1, 4},       -- 'c'
+    ['4'] = {1, 4, 5},    -- 'd'
+    ['5'] = {1, 5},       -- 'e'
+    ['6'] = {1, 2, 4},    -- 'f'
+    ['7'] = {1, 2, 4, 5}, -- 'g'
+    ['8'] = {1, 2, 5},    -- 'h'
+    ['9'] = {2, 4},       -- 'i'
+    ['0'] = {2, 4, 5}     -- 'j'
 }
 
--- Convierte cualquier cadena UTF-8 en secuencia de celdas Braille
-local function text_to_braille_cells(str)
-    local cells = {}
-    local in_number_mode = false
-    
+-- UTF-8 character parser
+local function utf8_chars(str)
+    local chars = {}
     local i = 1
     local len = #str
     while i <= len do
         local byte = string.byte(str, i)
-        local c
+        local char_len = 1
+        if byte >= 240 then char_len = 4
+        elseif byte >= 224 then char_len = 3
+        elseif byte >= 192 then char_len = 2 end
+        table.insert(chars, string.sub(str, i, i + char_len - 1))
+        i = i + char_len
+    end
+    return chars
+end
+
+-- Convert text to list of Braille cells
+local function text_to_braille_cells(str)
+    local chars = utf8_chars(str)
+    local cells = {}
+    local in_number_mode = false
+    
+    local i = 1
+    while i <= #chars do
+        local c = chars[i]
         
-        -- Detección de caracteres multibyte UTF-8 (2 bytes para tildes/ñ)
-        if byte >= 192 and byte <= 223 and (i + 1) <= len then
-            c = string.sub(str, i, i + 1)
-            i = i + 1
-        elseif byte >= 224 and byte <= 239 and (i + 2) <= len then
-            c = string.sub(str, i, i + 2)
-            i = i + 2
-        else
-            c = string.sub(str, i, i)
-        end
-        
-        if c == " " then
-            table.insert(cells, {}) -- Espacio entre palabras
+        if c == ' ' then
             in_number_mode = false
+            table.insert(cells, {})
         elseif DIGIT_MAP[c] then
             if not in_number_mode then
-                table.insert(cells, NUMBER_SIGN)
+                table.insert(cells, NUMBER_PREFIX)
                 in_number_mode = true
             end
             table.insert(cells, DIGIT_MAP[c])
@@ -190,27 +198,34 @@ end
 
 function execute(opts)
     opts = opts or {}
-    local text = opts.text or "Baño hombres"
+    local text = opts.text or "Restroom"
     if #text == 0 then text = "3DEMS" end
 
-    -- Obtener la configuración según la normativa seleccionada
-    local std_name = opts.standard or "Europa / España (ONCE - Marburg)"
-    local std_config = STANDARDS[std_name]
+    -- Determine standard based on selection
+    local std_name = tostring(opts.standard or "")
+    local std_config = nil
+    if string.find(std_name, "Europe") or string.find(std_name, "ONCE") or string.find(std_name, "Marburg") then
+        std_config = STANDARDS["Europe / Spain (ONCE - Marburg Medium)"]
+    elseif string.find(std_name, "BANA") or string.find(std_name, "Compact") then
+        std_config = STANDARDS["International / Compact (BANA)"]
+    else
+        std_config = STANDARDS["North America / USA (ADA Standard)"]
+    end
 
     local dot_diameter = std_config and std_config.dot_diameter or (opts.custom_dot_diameter or 1.6)
     local dot_height = std_config and std_config.dot_height or (opts.custom_dot_height or 0.7)
-    local dot_spacing_x = std_config and std_config.dot_spacing_x or 2.5
-    local dot_spacing_y = std_config and std_config.dot_spacing_y or 2.5
-    local cell_pitch_x = std_config and std_config.cell_pitch_x or 6.2
-    local gap_to_visual_text = std_config and std_config.visual_gap or 8.0
+    local dot_spacing_x = std_config and std_config.dot_spacing_x or 2.4
+    local dot_spacing_y = std_config and std_config.dot_spacing_y or 2.4
+    local cell_pitch_x = std_config and std_config.cell_pitch_x or 6.3
+    local gap_to_visual_text = std_config and std_config.visual_gap or 9.5
 
     local dot_radius = dot_diameter / 2
     local base_thickness = opts.base_thickness or 2.4
     local include_visual = (opts.include_visual_text ~= false)
     local mounting_holes = (opts.mounting_holes == true)
-    local dot_shape = opts.dot_shape or "Cúpula esférica redondeada (Sensación táctil clásica)"
+    local dot_shape = tostring(opts.dot_shape or "")
 
-    local braille_cell_height = dot_spacing_y * 2 -- De fila 1 a fila 3 (5.0 mm)
+    local braille_cell_height = dot_spacing_y * 2
 
     local cells = text_to_braille_cells(text)
     local num_cells = math.max(#cells, 1)
@@ -221,7 +236,7 @@ function execute(opts)
     local margin_top = 8.0
     local margin_bottom = 8.0
 
-    -- 1. Preparar texto visual si está habilitado
+    -- 1. Prepare visual embossed lettering if enabled
     local visual_mesh = nil
     local visual_width = 0
     local visual_height = 0
@@ -246,13 +261,12 @@ function execute(opts)
         end)
     end
 
-    -- Calcular tamaño total de la placa base
+    -- Compute plate dimensions
     local content_width = math.max(braille_width, visual_width)
     local plate_width = content_width + (margin_x * 2)
     local total_content_height = braille_cell_height + (include_visual and (gap_to_visual_text + visual_height) or 0)
     local plate_height = total_content_height + margin_top + margin_bottom
 
-    -- Puntos de referencia geométricos
     local p_min_x = 0
     local p_max_x = plate_width
     local p_min_y = 0
@@ -261,8 +275,7 @@ function execute(opts)
     local p_center_y = plate_height / 2
     local p_top_z = base_thickness
 
-    -- 2. Calcular coordenadas absolutas de todos los puntos Braille
-    local is_sphere = (string.find(dot_shape, "cilíndrico") == nil)
+    local is_sphere = (string.find(dot_shape, "Cylindrical") == nil and string.find(dot_shape, "cilíndrico") == nil)
 
     local DOT_OFFSETS = {
         [1] = {x = 0, y = dot_spacing_y},
@@ -293,14 +306,13 @@ function execute(opts)
         end
     end
 
-    -- 3. Crear placa base sólida pura mediante la API nativa de PrusaSlicer
+    -- 3. Solid base plate
     local base_mesh = api.make_cube(plate_width, plate_height, base_thickness)
     local other_volumes = {}
 
-    -- Añadir los puntos Braille con anclaje continuo para garantizar su laminado completo
+    -- Braille tactile dots with anti-thin-wall stems
     for _, dot in ipairs(dots) do
         if is_sphere then
-            -- Base cilíndrica de apoyo (0.35 mm) para asegurar que el laminador lo detecta con boquilla 0.4
             local stem_height = dot_height * 0.5
             table.insert(other_volumes, {
                 mesh = api.make_cylinder(dot_radius, stem_height),
@@ -310,7 +322,6 @@ function execute(opts)
                     z = p_top_z
                 }
             })
-            -- Cúpula esférica táctil encima
             table.insert(other_volumes, {
                 mesh = api.make_sphere(dot_radius),
                 translate = {
@@ -320,7 +331,6 @@ function execute(opts)
                 }
             })
         else
-            -- Pivote cilíndrico clásico
             table.insert(other_volumes, {
                 mesh = api.make_cylinder(dot_radius, dot_height),
                 translate = {
@@ -332,7 +342,7 @@ function execute(opts)
         end
     end
 
-    -- 4. Añadir orificios de montaje M3 (3.2 mm) si están habilitados
+    -- 4. Optional M3 screw mounting holes (3.2 mm)
     if mounting_holes then
         local hole_radius = 1.6
         local hole_height = base_thickness * 3
@@ -370,7 +380,7 @@ function execute(opts)
         end
     end
 
-    -- 5. Posicionar texto visual centrado justo debajo del bloque Braille
+    -- 5. Embossed visual lettering centered below Braille
     if include_visual and visual_mesh and vb then
         local visual_local_cx = (vb.max_x + vb.min_x) / 2
         local visual_local_cy = (vb.max_y + vb.min_y) / 2
@@ -386,7 +396,7 @@ function execute(opts)
         })
     end
 
-    -- 6. Añadir el objeto completo a la bandeja
+    -- 6. Add complete object to PrusaSlicer
     api.project:add_object {
         mesh = base_mesh,
         other_volumes = other_volumes
